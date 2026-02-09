@@ -140,97 +140,157 @@
 // The global collection of ports
 struct port ports[NPORT];
 
-
 // Initialize the ports
-void 
+void
 port_init(void)
 {
-    // Initialize the ports list.  Upon initialization, the following should be
-    // true:
-    //    - The Predefined ports (see port.h) should all be owned by the
-    //      kernel.
-    //    - All other ports should be marked as free.
-    //    - All ports should have their start and end set to indicate an empty
-    //      buffer
-    
-    // Loop through 0 to NPORT-1, initialize status of kernal ports and
-    // non-kernal ports. Make sure that all ports are empty.
-    for(int i=0; i<NPORT; i++){
-        ports[i].owner = 0;
-        ports[i].head  = 0;
-        ports[i].tail  = 0;
+    // Predefined ports owned by kernel, not free
+    for (int i = 0; i < NPORT; i++) {
+        ports[i].head = 0;
+        ports[i].tail = 0;
         ports[i].count = 0;
 
-        if(i>=2){
-            ports[i].free = 0;
-            ports[i].type = PORT_TYPE_KERNEL;
-        }
-        else{
-            ports[i].free = 1;
-            ports[i].type = PORT_TYPE_FREE;
-        }
+        // Optional: clear buffer contents (not required for correctness)
+        // for (int j = 0; j < PORT_BUF_SIZE; j++) ports[i].buffer[j] = 0;
 
+        ports[i].owner = 0;
+
+        if (i == PORT_CONSOLEIN || i == PORT_CONSOLEOUT || i == PORT_DISKCMD) {
+            ports[i].type = PORT_TYPE_KERNEL;
+            ports[i].free = 0;      // kernel owns it, so not allocatable
+        } else {
+            ports[i].type = PORT_TYPE_FREE;
+            ports[i].free = 1;      // available to acquire
+        }
     }
-    
 }
 
 
 // Close the port.
-void 
+void
 port_close(int port)
 {
-    // Close the port.  If the port is not open, nothing will happen.  However,
-    // if it is open, we empty its contents and mark it as free.
+    if (port < 0 || port >= NPORT)
+        return;
 
-    // YOUR CODE HERE
+    // If already free, do nothing
+    if (ports[port].free)
+        return;
+
+    // Empty the port and mark as free (ONLY if it's not a kernel port)
+    ports[port].head = 0;
+    ports[port].tail = 0;
+    ports[port].count = 0;
+    ports[port].owner = 0;
+
+    if (ports[port].type != PORT_TYPE_KERNEL) {
+        ports[port].type = PORT_TYPE_FREE;
+        ports[port].free = 1;
+    } else {
+        // Kernel ports stay reserved/opened-by-kernel.
+        ports[port].free = 0;
+    }
 }
 
 
-
-// Acquire Port.  If the specified port is negative, allocate the next available port.
-int 
+// Acquire Port. If the specified port is negative, allocate the next available port.
+int
 port_acquire(int port, procid_t proc_id)
 {
-    // If the port number is -1, allocate the next free port.
-    // If the port number is not -1, check to see if the port is available.
-    //   If the port is not available, return -1 
-    // Mark the port as allocated, set the owner of the port, and
-    // then return the port number allocated.
-    // 
-    // If this operation fails, return -1.
+    // Allocate next free port
+    if (port < 0) {
+        for (int i = 0; i < NPORT; i++) {
+            if (ports[i].free && ports[i].type == PORT_TYPE_FREE) {
+                ports[i].free = 0;
+                ports[i].owner = (int)proc_id;
+                ports[i].type = PORT_TYPE_FREE; // still "user" type, just allocated
 
-    // YOUR CODE HERE
-    
-    return -1;
+                // Ensure empty buffer on acquire
+                ports[i].head = 0;
+                ports[i].tail = 0;
+                ports[i].count = 0;
+
+                return i;
+            }
+        }
+        return -1; // none available
+    }
+
+    // Specific port requested
+    if (port >= NPORT)
+        return -1;
+
+    // Must be free and not a kernel port
+    if (!ports[port].free)
+        return -1;
+    if (ports[port].type != PORT_TYPE_FREE)
+        return -1;
+
+    ports[port].free = 0;
+    ports[port].owner = (int)proc_id;
+
+    // Ensure empty buffer on acquire
+    ports[port].head = 0;
+    ports[port].tail = 0;
+    ports[port].count = 0;
+
+    return port;
 }
 
 
-// Write up to n characters from buf to a port.  Return the number of bytes written.
-int 
+// Write up to n characters from buf to a port. Return the number of bytes written.
+int
 port_write(int port, char *buf, int n)
 {
-    // If the port is not open, return -1
-    // Write, at most, n bytes to the buffer.  If the buffer fills
-    // up before n bytes, stop writing. Return the actual number of bytes
-    // you have written. Be sure to update the count field as you
-    // write it.
+    if (port < 0 || port >= NPORT)
+        return -1;
+    if (buf == 0 || n < 0)
+        return -1;
 
-    // YOUR CODE HERE
-    return -1;
+    // If the port is not open, return -1
+    if (ports[port].free)
+        return -1;
+
+    int written = 0;
+
+    while (written < n && ports[port].count < PORT_BUF_SIZE) {
+        ports[port].buffer[ports[port].head] = buf[written];
+
+        // advance head with wrap
+        ports[port].head = (ports[port].head + 1) % PORT_BUF_SIZE;
+
+        ports[port].count++;
+        written++;
+    }
+
+    return written;
 }
 
 
 // Read up to n characters from a port into buf. Return the number of bytes read.
-int 
+int
 port_read(int port, char *buf, int n)
 {
+    if (port < 0 || port >= NPORT)
+        return -1;
+    if (buf == 0 || n < 0)
+        return -1;
+
     // If the port is not open, return -1.
-    // Read at most n bytes from the port. If the port contents are
-    // exhausted before you complete the read, stop reading.
-    // Return the actual number of bytes you have read.
-    // Be sure to update count as you read.
+    if (ports[port].free)
+        return -1;
 
-    // YOUR CODE HERE
+    int read = 0;
 
-    return -1;
+    while (read < n && ports[port].count > 0) {
+        buf[read] = ports[port].buffer[ports[port].tail];
+
+        // advance tail with wrap
+        ports[port].tail = (ports[port].tail + 1) % PORT_BUF_SIZE;
+
+        ports[port].count--;
+        read++;
+    }
+
+    return read;
 }
