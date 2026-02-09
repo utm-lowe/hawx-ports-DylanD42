@@ -155,8 +155,23 @@ port_init(void)
     
     // Loop through 0 to NPORT-1, initialize status of kernal ports and
     // non-kernal ports. Make sure that all ports are empty.
+    for(int i=0; i<NPORT; i++){
+        ports[i].owner = 0;
+        ports[i].head  = 0;
+        ports[i].tail  = 0;
+        ports[i].count = 0;
 
-    // YOUR CODE HERE
+        if(i>=2){
+            ports[i].free = 0;
+            ports[i].type = PORT_TYPE_KERNEL;
+        }
+        else{
+            ports[i].free = 1;
+            ports[i].type = PORT_TYPE_FREE;
+        }
+
+    }
+    
 }
 
 
